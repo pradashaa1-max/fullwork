@@ -11,93 +11,74 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install system deps
+      - name: Deps
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq build-essential fakeroot perl dpkg curl xz-utils git rsync
+          sudo apt-get install -y -qq build-essential fakeroot perl dpkg curl xz-utils git
           for d in /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu; do
             [ -f $d/libtinfo.so.6 ] && [ ! -e $d/libtinfo.so.5 ] && sudo ln -sf libtinfo.so.6 $d/libtinfo.so.5 || true
           done
 
-      - name: Install Theos
+      - name: Theos
         run: |
           set -e
           export THEOS=$HOME/theos
           echo "THEOS=$THEOS" >> $GITHUB_ENV
-
-          # official bootstrap (ставит theos + vendor)
-          curl -fsSL https://raw.githubusercontent.com/theos/theos/master/bin/install-theos > /tmp/install-theos
-          # неинтерактивно: только клон, без вопросов
           rm -rf $THEOS
           git clone --depth=1 https://github.com/theos/theos $THEOS
-
-          # vendor include/lib вручную
           mkdir -p $THEOS/vendor
           git clone --depth=1 https://github.com/theos/headers $THEOS/vendor/include
           git clone --depth=1 https://github.com/theos/lib $THEOS/vendor/lib
-
-          # sdks
           rm -rf $THEOS/sdks
           git clone --depth=1 https://github.com/theos/sdks $THEOS/sdks
 
-          # toolchain
-          mkdir -p $THEOS/toolchain/linux/iphone
           cd /tmp
           curl -fL -o tc.tar.lzma \
             "https://github.com/sbingner/llvm-project/releases/download/v10.0.0-1/linux-ios-arm64e-clang-toolchain.tar.lzma"
+          rm -rf /tmp/tcout
           mkdir -p /tmp/tcout
           tar --lzma -xf tc.tar.lzma -C /tmp/tcout
-          # положить bin/ в нужное место
-          if [ -d /tmp/tcout/ios-arm64e-clang-toolchain ]; then
-            cp -a /tmp/tcout/ios-arm64e-clang-toolchain/. $THEOS/toolchain/linux/iphone/
-          else
-            cp -a /tmp/tcout/. $THEOS/toolchain/linux/iphone/
-          fi
 
-          CLANG=$(find $THEOS/toolchain -type f -name clang | head -1)
-          echo "CLANG=$CLANG"
-          test -n "$CLANG"
+          mkdir -p $THEOS/toolchain/linux/iphone
+          cp -a /tmp/tcout/ios-arm64e-clang-toolchain/. $THEOS/toolchain/linux/iphone/
+
+          CLANG=$THEOS/toolchain/linux/iphone/bin/clang
+          test -x "$CLANG"
           echo "CLANG=$CLANG" >> $GITHUB_ENV
-          TC_BIN=$(dirname "$CLANG")
-          echo "TC_BIN=$TC_BIN" >> $GITHUB_ENV
-          echo "$TC_BIN" >> $GITHUB_PATH
+          echo "TC_BIN=$THEOS/toolchain/linux/iphone/bin" >> $GITHUB_ENV
+          echo "$THEOS/toolchain/linux/iphone/bin" >> $GITHUB_PATH
           echo "$THEOS/bin" >> $GITHUB_PATH
 
-          # dm.pl
           if [ ! -x $THEOS/bin/dm.pl ]; then
             printf '#!/usr/bin/perl\nexec "dpkg-deb", @ARGV;\n' > $THEOS/bin/dm.pl
             chmod +x $THEOS/bin/dm.pl
           fi
 
-          echo "=== checks ==="
-          ls $THEOS/vendor/include | head -3
-          ls $THEOS/vendor/lib | head -3
-          ls $THEOS/sdks | head -5
-          ls $TC_BIN | head -10
+          echo "=== OK ==="
+          ls $THEOS/toolchain/linux/iphone/bin/clang*
           $CLANG --version | head -1
+          ls $THEOS/sdks | head -3
+          ls $THEOS/vendor/include | head -3
 
-      - name: Build dylib
+      - name: Build
         run: |
           set -e
           export THEOS=$HOME/theos
           export PATH="$TC_BIN:$THEOS/bin:$PATH"
           export CC="$CLANG"
-          export CXX="${CLANG}++"
-          [ -x "$TC_BIN/clang++" ] && export CXX="$TC_BIN/clang++"
+          export CXX="$TC_BIN/clang++"
           export TARGET_CC="$CC"
           export TARGET_CXX="$CXX"
 
           echo "CC=$CC"
           $CC --version | head -1
 
-          make clean || true
           make package FINALPACKAGE=1
 
           mkdir -p out
-          find . -name "*.dylib" -print -exec cp -v {} out/ \;
-          if [ -d packages ]; then
+          find . -name "*.dylib" -exec cp -v {} out/ \;
+          if ls packages/*.deb 1>/dev/null 2>&1; then
             for deb in packages/*.deb; do
-              [ -f "$deb" ] || continue
               dpkg-deb -x "$deb" /tmp/xdeb
               find /tmp/xdeb -name "*.dylib" -exec cp -v {} out/ \;
             done
@@ -105,7 +86,7 @@ jobs:
           ls -la out/
           test "$(ls out/*.dylib 2>/dev/null | wc -l)" -gt 0
 
-      - name: Upload dylib
+      - name: Upload
         uses: actions/upload-artifact@v4
         with:
           name: AstralCheat-dylib
