@@ -20,7 +20,6 @@ jobs:
             || wget -q http://archive.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.2-0ubuntu2_amd64.deb
           sudo dpkg -i libtinfo5_*.deb || true
           sudo apt-get install -f -y -qq || true
-          ls /lib/x86_64-linux-gnu/libtinfo.so.5* || ls /usr/lib/x86_64-linux-gnu/libtinfo.so.5* || true
 
       - name: Theos
         run: |
@@ -34,7 +33,6 @@ jobs:
           git clone --depth=1 https://github.com/theos/lib $THEOS/vendor/lib
           rm -rf $THEOS/sdks
           git clone --depth=1 https://github.com/theos/sdks $THEOS/sdks
-
           cd /tmp
           curl -fL -o tc.tar.lzma \
             "https://github.com/sbingner/llvm-project/releases/download/v10.0.0-1/linux-ios-arm64e-clang-toolchain.tar.lzma"
@@ -42,14 +40,12 @@ jobs:
           tar --lzma -xf tc.tar.lzma -C /tmp/tcout
           mkdir -p $THEOS/toolchain/linux/iphone
           cp -a /tmp/tcout/ios-arm64e-clang-toolchain/. $THEOS/toolchain/linux/iphone/
-
           CLANG=$THEOS/toolchain/linux/iphone/bin/clang
           test -x "$CLANG"
           echo "CLANG=$CLANG" >> $GITHUB_ENV
           echo "TC_BIN=$THEOS/toolchain/linux/iphone/bin" >> $GITHUB_ENV
           echo "$THEOS/toolchain/linux/iphone/bin" >> $GITHUB_PATH
           echo "$THEOS/bin" >> $GITHUB_PATH
-
           if [ ! -x $THEOS/bin/dm.pl ]; then
             printf '#!/usr/bin/perl\nexec "dpkg-deb", @ARGV;\n' > $THEOS/bin/dm.pl
             chmod +x $THEOS/bin/dm.pl
@@ -67,7 +63,14 @@ jobs:
           export TARGET_CXX="$CXX"
           echo "CC=$CC"
           $CC --version | head -1
-          make package FINALPACKAGE=1
+          set +e
+          make package FINALPACKAGE=1 2>&1 | tee /tmp/build.log
+          RC=${PIPESTATUS[0]}
+          set -e
+          echo "===== ERRORS ====="
+          grep -n "error:" /tmp/build.log || true
+          tail -40 /tmp/build.log
+          test $RC -eq 0
           mkdir -p out
           find . -name "*.dylib" -exec cp -v {} out/ \;
           if ls packages/*.deb 1>/dev/null 2>&1; then
