@@ -14,13 +14,14 @@ jobs:
       - name: Install deps
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq build-essential fakeroot perl dpkg curl xz-utils git \
-            libncurses5 libtinfo5 || true
-          # ubuntu 24 may not have libtinfo5 — symlink from .6
-          if [ ! -f /usr/lib/x86_64-linux-gnu/libtinfo.so.5 ]; then
-            sudo ln -sf /usr/lib/x86_64-linux-gnu/libtinfo.so.6 /usr/lib/x86_64-linux-gnu/libtinfo.so.5 || true
-            sudo ln -sf /lib/x86_64-linux-gnu/libtinfo.so.6 /lib/x86_64-linux-gnu/libtinfo.so.5 || true
-          fi
+          sudo apt-get install -y -qq build-essential fakeroot perl dpkg curl xz-utils git
+          # libtinfo.so.5 for old clang
+          sudo apt-get install -y -qq libncurses5 libtinfo5 2>/dev/null || true
+          for d in /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu; do
+            if [ -f $d/libtinfo.so.6 ] && [ ! -f $d/libtinfo.so.5 ]; then
+              sudo ln -sf libtinfo.so.6 $d/libtinfo.so.5
+            fi
+          done
 
       - name: Theos + SDK + Toolchain
         run: |
@@ -31,40 +32,50 @@ jobs:
           rm -rf $THEOS
           git clone --depth=1 https://github.com/theos/theos.git $THEOS
 
-          # vendor (headers/libs)
-          cd $THEOS
-          git submodule update --init --recursive || true
-          # if still no vendor — pull install script pieces
-          if [ ! -d "$THEOS/vendor/include" ]; then
+          # vendor
+          if [ ! -d $THEOS/vendor/include ]; then
             git clone --depth=1 https://github.com/theos/headers.git $THEOS/vendor/include || true
+          fi
+          if [ ! -d $THEOS/vendor/lib ]; then
             git clone --depth=1 https://github.com/theos/lib.git $THEOS/vendor/lib || true
           fi
 
           rm -rf $THEOS/sdks
           git clone --depth=1 https://github.com/theos/sdks.git $THEOS/sdks
 
-          mkdir -p $THEOS/toolchain
+          # toolchain (рабочая ссылка)
+          mkdir -p $THEOS/toolchain/linux/iphone
           cd /tmp
           curl -fL -o tc.tar.lzma \
-            "https://github.com/sbingner/llvm-project/releases/download/v16.0.0-1/linux-ios-arm64e-clang-toolchain.tar.lzma"
-          tar --lzma -xf tc.tar.lzma -C $THEOS/toolchain 2>/dev/null \
-            || (xz -d -c tc.tar.lzma | tar -xf - -C $THEOS/toolchain)
+            "https://github.com/sbingner/llvm-project/releases/download/v10.0.0-2/linux-ios-arm64e-clang-toolchain.tar.lzma" \
+          || curl -fL -o tc.tar.lzma \
+            "https://github.com/sbingner/llvm-project/releases/download/v10.0.0-1/linux-ios-arm64e-clang-toolchain.tar.lzma"
 
-          CLANG=$(find $THEOS/toolchain -type f -name clang | head -1)
+          tar --lzma -xf tc.tar.lzma -C $THEOS/toolchain/linux/iphone 2>/dev/null \
+            || (xz -d -c tc.tar.lzma | tar -xf - -C $THEOS/toolchain/linux/iphone)
+
+          # если внутри ещё папка — поднять
+          if [ -d $THEOS/toolchain/linux/iphone/ios-arm64e-clang-toolchain ]; then
+            mv $THEOS/toolchain/linux/iphone/ios-arm64e-clang-toolchain/* $THEOS/toolchain/linux/iphone/
+            rmdir $THEOS/toolchain/linux/iphone/ios-arm64e-clang-toolchain || true
+          fi
+
+          CLANG=$(find $THEOS/toolchain -type f -name 'clang*' | grep -E '/clang$|/clang-[0-9]+$' | head -1)
           echo "FOUND CLANG: $CLANG"
-          test -n "$CLANG" && test -x "$CLANG"
+          test -n "$CLANG"
+          chmod +x "$CLANG" || true
           TC_BIN=$(dirname "$CLANG")
           echo "TC_BIN=$TC_BIN" >> $GITHUB_ENV
           echo "$TC_BIN" >> $GITHUB_PATH
           echo "$THEOS/bin" >> $GITHUB_PATH
 
-          if [ ! -x "$THEOS/bin/dm.pl" ]; then
+          if [ ! -x $THEOS/bin/dm.pl ]; then
             printf '#!/usr/bin/perl\nexec "dpkg-deb", @ARGV;\n' > $THEOS/bin/dm.pl
             chmod +x $THEOS/bin/dm.pl
           fi
 
-          ls "$THEOS/sdks" | head
-          ls "$THEOS/vendor" || true
+          ls $THEOS/sdks | head
+          ls $THEOS/toolchain/linux/iphone/bin 2>/dev/null | head || ls $TC_BIN | head
           "$CLANG" --version | head -1
 
       - name: Compile dylib
@@ -72,14 +83,16 @@ jobs:
           set -e
           export THEOS=$HOME/theos
           export PATH="$TC_BIN:$THEOS/bin:$PATH"
-          export CC="$TC_BIN/clang"
-          export CXX="$TC_BIN/clang++"
-          [ -x "$CXX" ] || ln -sf clang "$TC_BIN/clang++" || true
+          export CC="$CLANG"
+          # CLANG path from previous step via TC_BIN
+          export CC=$(find $THEOS/toolchain -type f -name 'clang' | head -1)
+          export CXX=$(find $THEOS/toolchain -type f -name 'clang++' | head -1)
+          [ -n "$CXX" ] || export CXX="$CC"
           export TARGET_CC="$CC"
           export TARGET_CXX="$CXX"
 
-          which clang
-          clang --version | head -1
+          echo "CC=$CC"
+          "$CC" --version | head -1
 
           make clean || true
           make package FINALPACKAGE=1
