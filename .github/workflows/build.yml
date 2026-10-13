@@ -14,10 +14,13 @@ jobs:
       - name: Deps
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq build-essential fakeroot perl dpkg curl xz-utils git
-          for d in /usr/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu; do
-            [ -f $d/libtinfo.so.6 ] && [ ! -e $d/libtinfo.so.5 ] && sudo ln -sf libtinfo.so.6 $d/libtinfo.so.5 || true
-          done
+          sudo apt-get install -y -qq build-essential fakeroot perl dpkg curl xz-utils git wget
+          cd /tmp
+          wget -q http://archive.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.3-2ubuntu0.1_amd64.deb \
+            || wget -q http://archive.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.2-0ubuntu2_amd64.deb
+          sudo dpkg -i libtinfo5_*.deb || true
+          sudo apt-get install -f -y -qq || true
+          ls /lib/x86_64-linux-gnu/libtinfo.so.5* || ls /usr/lib/x86_64-linux-gnu/libtinfo.so.5* || true
 
       - name: Theos
         run: |
@@ -35,10 +38,8 @@ jobs:
           cd /tmp
           curl -fL -o tc.tar.lzma \
             "https://github.com/sbingner/llvm-project/releases/download/v10.0.0-1/linux-ios-arm64e-clang-toolchain.tar.lzma"
-          rm -rf /tmp/tcout
-          mkdir -p /tmp/tcout
+          rm -rf /tmp/tcout && mkdir -p /tmp/tcout
           tar --lzma -xf tc.tar.lzma -C /tmp/tcout
-
           mkdir -p $THEOS/toolchain/linux/iphone
           cp -a /tmp/tcout/ios-arm64e-clang-toolchain/. $THEOS/toolchain/linux/iphone/
 
@@ -53,12 +54,7 @@ jobs:
             printf '#!/usr/bin/perl\nexec "dpkg-deb", @ARGV;\n' > $THEOS/bin/dm.pl
             chmod +x $THEOS/bin/dm.pl
           fi
-
-          echo "=== OK ==="
-          ls $THEOS/toolchain/linux/iphone/bin/clang*
           $CLANG --version | head -1
-          ls $THEOS/sdks | head -3
-          ls $THEOS/vendor/include | head -3
 
       - name: Build
         run: |
@@ -69,12 +65,9 @@ jobs:
           export CXX="$TC_BIN/clang++"
           export TARGET_CC="$CC"
           export TARGET_CXX="$CXX"
-
           echo "CC=$CC"
           $CC --version | head -1
-
           make package FINALPACKAGE=1
-
           mkdir -p out
           find . -name "*.dylib" -exec cp -v {} out/ \;
           if ls packages/*.deb 1>/dev/null 2>&1; then
