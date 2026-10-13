@@ -1,7 +1,7 @@
 Package: com.astral.cheat
 Name: Astral Cheat
 Depends: mobilesubstrate
-Version: 1.4.0
+Version: 1.4.1
 Architecture: iphoneos-arm
 Description: AstralCheat StandRise Rework dylib
 Maintainer: Astral
