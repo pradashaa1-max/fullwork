@@ -54,10 +54,13 @@ static bool gIl2 = false;
 
 static void Il2Init() {
     if (gIl2) return;
-#define L(n) gApi.n = (decltype(gApi.n))dlsym(RTLD_DEFAULT, "il2cpp_" #n)
-    L(domain_get); L(domain_get_assemblies); L(assembly_get_image);
-    L(class_from_name); L(class_get_method_from_name); L(runtime_invoke); L(object_unbox);
-#undef L
+gApi.domain_get = (Il2CppDomain*(*)())dlsym(RTLD_DEFAULT, "il2cpp_domain_get");
+    gApi.domain_get_assemblies = (Il2CppAssembly**(*)(Il2CppDomain*, size_t*))dlsym(RTLD_DEFAULT, "il2cpp_domain_get_assemblies");
+    gApi.assembly_get_image = (Il2CppImage*(*)(Il2CppAssembly*))dlsym(RTLD_DEFAULT, "il2cpp_assembly_get_image");
+    gApi.class_from_name = (Il2CppClass*(*)(Il2CppImage*, const char*, const char*))dlsym(RTLD_DEFAULT, "il2cpp_class_from_name");
+    gApi.class_get_method_from_name = (Il2CppMethod*(*)(Il2CppClass*, const char*, int))dlsym(RTLD_DEFAULT, "il2cpp_class_get_method_from_name");
+    gApi.runtime_invoke = (void*(*)(Il2CppMethod*, void*, void**, void**))dlsym(RTLD_DEFAULT, "il2cpp_runtime_invoke");
+    gApi.object_unbox = (void*(*)(Il2CppObject*))dlsym(RTLD_DEFAULT, "il2cpp_object_unbox");
     gIl2 = (gApi.domain_get != NULL && gApi.class_from_name != NULL);
 }
 
@@ -239,9 +242,11 @@ static UIWindow* GameWin() {
 - (BOOL)_shouldCreateContextAsSecure { return gHideRec; }
 - (UIView*)hitTest:(CGPoint)p withEvent:(UIEvent*)e {
     UIView* hit = [super hitTest:p withEvent:e];
+    if (!hit || !gHud) return nil;
+    // allow only touches that land on HUD subviews (fab/panel tree)
     UIView* v = hit;
     while (v) {
-        if (gHud && (v == gHud.panel || v == gHud.fab)) return hit;
+        if (v == gHud) return hit;
         v = v.superview;
     }
     return nil;
@@ -387,7 +392,7 @@ static UIWindow* GameWin() {
     [self.secureTF layoutIfNeeded];
     for (UIView* s in self.secureTF.subviews) {
         NSString* c = NSStringFromClass(s.class);
-        if ([c containsString:@"Canvas"] || [c containsString:@"TextLayout"] || [c containsString:@"Field"])
+        if ([c rangeOfString:@"Canvas"].location != NSNotFound || [c rangeOfString:@"TextLayout"].location != NSNotFound || [c rangeOfString:@"Field"].location != NSNotFound)
             return s;
     }
     return self.secureTF.subviews.lastObject;
@@ -607,7 +612,7 @@ static UIWindow* GameWin() {
     [self relayout];
     [self applyHide];
     self.link = [CADisplayLink displayLinkWithTarget:self selector:@selector(tick:)];
-    self.link.preferredFramesPerSecond = 30;
+    if ([self.link respondsToSelector:@selector(setPreferredFramesPerSecond:)]) self.link.preferredFramesPerSecond = 30;
     [self.link addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSRunLoopCommonModes];
     [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onOrient)
                                                  name:UIDeviceOrientationDidChangeNotification object:nil];
