@@ -16,23 +16,10 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq build-essential fakeroot perl dpkg curl xz-utils git
 
-      - name: Setup Theos + Toolchain
+      - name: Theos + SDK + Toolchain
         run: |
-          set -e
+          set -eux
           export THEOS=$HOME/theos
           echo "THEOS=$THEOS" >> $GITHUB_ENV
 
-          rm -rf $THEOS
-          git clone --depth=1 --recursive https://github.com/theos/theos.git $THEOS
-
-          rm -rf $THEOS/sdks
-          git clone --depth=1 https://github.com/theos/sdks.git $THEOS/sdks
-
-          mkdir -p $THEOS/toolchain
-          cd /tmp
-          curl -fsSL -o tc.tar.lzma \
-            https://github.com/sbingner/llvm-project/releases/latest/download/linux-ios-arm64e-clang-toolchain.tar.lzma
-          tar --lzma -xf tc.tar.lzma -C $THEOS/toolchain
-
-          # найти clang
-          CLANG=$(find $THEOS/toolchain -name "clang" -type f | head -1)
+          git clone --depth=1 --recursive 
