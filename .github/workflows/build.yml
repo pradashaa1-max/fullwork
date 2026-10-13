@@ -18,8 +18,73 @@ jobs:
 
       - name: Theos + SDK + Toolchain
         run: |
-          set -eux
+          set -e
           export THEOS=$HOME/theos
           echo "THEOS=$THEOS" >> $GITHUB_ENV
 
-          git clone --depth=1 --recursive 
+          rm -rf $THEOS
+          git clone --depth=1 https://github.com/theos/theos.git $THEOS
+
+          rm -rf $THEOS/sdks
+          git clone --depth=1 https://github.com/theos/sdks.git $THEOS/sdks
+
+          mkdir -p $THEOS/toolchain
+          cd /tmp
+          curl -fsSL -o tc.tar.lzma \
+            https://github.com/sbingner/llvm-project/releases/latest/download/linux-ios-arm64e-clang-toolchain.tar.lzma
+          tar --lzma -xf tc.tar.lzma -C $THEOS/toolchain
+
+          CLANG=$(find $THEOS/toolchain -type f -name clang | head -1)
+          echo "FOUND CLANG: $CLANG"
+          test -n "$CLANG"
+          test -x "$CLANG"
+          TC_BIN=$(dirname "$CLANG")
+          echo "TC_BIN=$TC_BIN" >> $GITHUB_ENV
+          echo "$TC_BIN" >> $GITHUB_PATH
+          echo "$THEOS/bin" >> $GITHUB_PATH
+
+          if [ ! -x "$THEOS/bin/dm.pl" ]; then
+            printf '#!/usr/bin/perl\nexec "dpkg-deb", @ARGV;\n' > $THEOS/bin/dm.pl
+            chmod +x $THEOS/bin/dm.pl
+          fi
+
+          ls "$THEOS/sdks"
+          "$CLANG" --version | head -1
+
+      - name: Compile dylib
+        run: |
+          set -e
+          export THEOS=$HOME/theos
+          export PATH="$TC_BIN:$THEOS/bin:$PATH"
+          export CC="$TC_BIN/clang"
+          export CXX="$TC_BIN/clang++"
+          export TARGET_CC="$CC"
+          export TARGET_CXX="$CXX"
+
+          which clang
+          clang --version | head -1
+
+          make clean || true
+          make package FINALPACKAGE=1
+
+          mkdir -p out
+          find . -name "AstralCheat.dylib" -exec cp -v {} out/ \; || true
+          find .theos -name "*.dylib" -exec cp -v {} out/ \; || true
+
+          if [ -d packages ]; then
+            for deb in packages/*.deb; do
+              [ -f "$deb" ] || continue
+              dpkg-deb -x "$deb" /tmp/xdeb
+              find /tmp/xdeb -name "*.dylib" -exec cp -v {} out/ \;
+            done
+          fi
+
+          ls -la out/
+          test "$(ls out/*.dylib 2>/dev/null | wc -l)" -gt 0
+
+      - name: Upload ONLY dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: AstralCheat-dylib
+          path: out/*.dylib
+          if-no-files-found: error
