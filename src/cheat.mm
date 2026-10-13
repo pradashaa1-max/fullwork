@@ -166,7 +166,7 @@ static V3 InvV3(Il2CppMethod* m, void* o) {
     void* e = NULL;
     void* r = gApi.runtime_invoke(m, o, NULL, &e);
     if (e || !r || !gApi.object_unbox) return z;
-    return *reinterpret_cast<V3*>(gApi.object_unbox(r));
+    return *reinterpret_cast<V3*>(gApi.object_unbox((Il2CppObject*)r));
 }
 
 static void GameTick() {
@@ -246,7 +246,7 @@ static UIWindow* GameWin() {
     // allow only touches that land on HUD subviews (fab/panel tree)
     UIView* v = hit;
     while (v) {
-        if (v == gHud) return hit;
+        if (v == (UIView*)gHud) return hit;
         v = v.superview;
     }
     return nil;
