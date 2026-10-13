@@ -1,0 +1,63 @@
+name: Build Dylib
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential fakeroot perl dpkg curl xz-utils git
+
+      - name: Setup Theos
+        run: |
+          set -e
+          export THEOS=$HOME/theos
+          echo "THEOS=$THEOS" >> $GITHUB_ENV
+          rm -rf $THEOS
+          git clone --depth=1 --recursive https://github.com/theos/theos.git $THEOS
+          rm -rf $THEOS/sdks
+          git clone --depth=1 https://github.com/theos/sdks.git $THEOS/sdks
+          mkdir -p $THEOS/toolchain
+          cd /tmp
+          curl -fsSL -o tc.tar.lzma \
+            https://github.com/sbingner/llvm-project/releases/latest/download/linux-ios-arm64e-clang-toolchain.tar.lzma
+          tar --lzma -xf tc.tar.lzma -C $THEOS/toolchain
+          find $THEOS/bin -type l ! -exec test -e {} \; -delete 2>/dev/null || true
+          chmod +x $THEOS/bin/* 2>/dev/null || true
+          echo "$THEOS/bin" >> $GITHUB_PATH
+          if [ ! -x "$THEOS/bin/dm.pl" ]; then
+            printf '#!/usr/bin/perl\nexec "dpkg-deb", @ARGV;\n' > $THEOS/bin/dm.pl
+            chmod +x $THEOS/bin/dm.pl
+          fi
+
+      - name: Build dylib
+        run: |
+          export THEOS=$HOME/theos
+          export PATH="$THEOS/bin:$PATH"
+          make package FINALPACKAGE=1
+          mkdir -p out
+          # достаём dylib из пакета и из obj
+          find .theos packages -name "AstralCheat.dylib" -exec cp {} out/ \; 2>/dev/null || true
+          find .theos -name "*.dylib" -exec cp {} out/ \; 2>/dev/null || true
+          # если deb есть — вытащим dylib из него
+          for deb in packages/*.deb; do
+            [ -f "$deb" ] || continue
+            dpkg-deb -x "$deb" /tmp/debx
+            find /tmp/debx -name "*.dylib" -exec cp {} out/ \;
+          done
+          ls -la out/
+          test -n "$(ls out/*.dylib 2>/dev/null)" || (echo "NO DYLIB" && find . -name "*.dylib" && exit 1)
+
+      - name: Upload dylib
+        uses: actions/upload-artifact@v4
+        with:
+          name: AstralCheat-dylib
+          path: out/*.dylib
